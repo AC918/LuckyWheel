@@ -42,6 +42,34 @@ function toggleAdminMode(){
 // ===== Helpers =====
 function uid(){ return Math.random().toString(16).slice(2) + Date.now().toString(16); }
 
+function syncItemsFromEditor(){
+  const wrap = document.getElementById('items');
+  if(!wrap) return;
+
+  const rows = wrap.querySelectorAll('.row');
+  rows.forEach((row, idx) => {
+    const inputs = row.querySelectorAll('input');
+    if(!inputs || inputs.length < 2) return;
+
+    const txt = inputs[0].value ?? '';
+    const col = inputs[1].value ?? '#444';
+
+    // weight chỉ có khi adminMode bật
+    let wVal = items[idx]?.weight ?? 0;
+    if (adminMode && inputs[2]) {
+      const v = Number(inputs[2].value);
+      wVal = Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 0;
+    }
+
+    if(items[idx]){
+      items[idx].text = txt;
+      items[idx].color = col;
+      items[idx].weight = wVal;
+    }
+  });
+}
+
+
 function escapeHtml(s){
   return String(s)
     .replaceAll('&','&amp;')
@@ -216,7 +244,7 @@ function fromPayload(arr){
     id: x.id ?? uid(),
     text: x.text ?? '',
     color: x.color ?? pickNewColor(),
-    weight: Number.isFinite(+x.weight) ? +x.weight : 1
+    weight: Number.isFinite(+x.weight) ? +x.weight : 0
   }));
 }
 function saveToLocal(){
@@ -273,7 +301,7 @@ function renderEditor(){
     row.innerHTML = `
       <input placeholder="Nội dung ô" value="${escapeHtml(it.text)}"/>
       <input type="color" value="${it.color}"/>
-      ${adminMode ? `<input type="number" min="0.1" step="0.1" value="${it.weight}" title="Weight"/>` : ``}
+      ${adminMode ? `<input type="number" min="0" max="100" step="1" value="${it.weight ?? 0}" title="Weight(%)"/>` : ``}
       <button class="secondary" title="Xoá">🗑️</button>
     `;
 
@@ -286,12 +314,25 @@ function renderEditor(){
     txt.addEventListener('input', e=> { it.text = e.target.value; drawWheel(); });
     col.addEventListener('input', e=> { it.color = e.target.value; drawWheel(); });
 
-    if(w){
-      w.addEventListener('input', e=> {
-        const v = parseFloat(e.target.value || '1');
-        it.weight = Number.isFinite(v) ? v : 1;
-      });
-    }
+   // debounce lưu để không spam localStorage
+let saveTimer = null;
+function scheduleSave(){
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => saveToLocal(), 150);
+}
+
+if(w){
+  w.addEventListener('input', e=> {
+    const v = Number(e.target.value);
+    // cho phép 0..100, rỗng/NaN => 0
+    let ww = Number.isFinite(v) ? v : 0;
+    ww = Math.max(0, Math.min(100, ww));
+    it.weight = ww;
+
+    scheduleSave(); // ✅ lưu ngay
+  });
+}
+
 
     del.addEventListener('click', ()=>{
       items.splice(idx,1);
@@ -421,19 +462,54 @@ function drawWheel(){
   ctx.restore();
 }
 
-// ===== Winner calculation (needle points UP) =====
+// ===== Winner calculation (needle angle defined by POINTER_ANGLE) =====
 function getIndexFromRotation(rot){
   const n = items.length;
   if(n === 0) return -1;
-  const step = (Math.PI*2)/n;
+  const step = TAU / n;
 
-  let angle = (-Math.PI/2 - rot) % (Math.PI*2);
-  if(angle < 0) angle += Math.PI*2;
+  // góc của kim trong hệ bánh xe (0 ở bên phải, tăng theo chiều kim đồng hồ)
+  // theta là góc (trên bánh) đang nằm đúng dưới kim
+  let theta = (POINTER_ANGLE - rot) % TAU;
+  if(theta < 0) theta += TAU;
 
-  return Math.floor(angle / step);
+  // đẩy vào trong ô để tránh đúng biên (floating error)
+  theta = (theta + step * 1e-6) % TAU;
+
+  return Math.floor(theta / step);
 }
 
+
+function findRotationForIndex(targetIndex){
+  const n = items.length;
+  const step = TAU / n;
+
+  // Chọn 1 góc nằm "sâu" trong ô targetIndex để tránh rơi đúng biên
+  const inside = step * 0.25; // cách biên 25% mỗi bên
+  const theta = targetIndex * step + inside + Math.random() * (step - 2*inside);
+
+  // Muốn: theta (trên bánh) nằm đúng dưới kim:
+  // theta + rot = POINTER_ANGLE  (mod TAU)
+  // => rot = POINTER_ANGLE - theta
+  let rot = POINTER_ANGLE - theta;
+
+  // Không normalize ở đây cũng được, nhưng normalize giúp ổn định số
+  rot = normAngle(rot);
+
+  // BẢO HIỂM: nếu do mod/float vẫn lệch (hiếm), thử quét vài điểm trong ô
+  if(getIndexFromRotation(rot) !== targetIndex){
+    for(let k=0;k<40;k++){
+      const t2 = targetIndex*step + inside + Math.random()*(step-2*inside);
+      const r2 = normAngle(POINTER_ANGLE - t2);
+      if(getIndexFromRotation(r2) === targetIndex) return r2;
+    }
+  }
+  return rot;
+}
+
+
 function easeOutQuint(t){ return 1 - Math.pow(1 - t, 5); }
+
 function pickWeightedIndex(){
   const n = items.length;
   if(n === 0) return -1;
@@ -441,12 +517,13 @@ function pickWeightedIndex(){
   // đọc % (0..100); NaN/<=0 coi như "chưa set"
   const raw = items.map(it => {
     const v = Number(it.weight);
-    return (Number.isFinite(v) && v > 0) ? v : 0;
+    return (Number.isFinite(v) && v > 0) ? Math.min(100, v) : 0;
   });
 
   // Nếu có ô 100% (hoặc hơn) => chắc chắn vào ô có % lớn nhất
   const maxV = Math.max(...raw);
   if (maxV >= 100){
+    // nếu nhiều ô cùng max (>=100) thì random giữa chúng
     const candidates = [];
     for(let i=0;i<n;i++) if(raw[i] === maxV) candidates.push(i);
     return candidates[Math.floor(Math.random() * candidates.length)];
@@ -477,12 +554,12 @@ function pickWeightedIndex(){
     // unspecified = 0
   } else {
     if (unspecifiedIdx.length > 0){
-      // còn phần trăm => chia đều cho các ô chưa set
+      // còn % => chia đều cho các ô chưa set
       const remain = 100 - sum;
       for(const i of specifiedIdx){
         prob[i] = raw[i] / 100;
       }
-      const each = remain / 100 / unspecifiedIdx.length;
+      const each = (remain / 100) / unspecifiedIdx.length;
       for(const i of unspecifiedIdx){
         prob[i] = each;
       }
@@ -503,10 +580,10 @@ function pickWeightedIndex(){
   return n - 1;
 }
 
-
-
 // ===== Fix spin slow after first time: normalize + delta from current =====
 const TAU = Math.PI * 2;
+// Góc kim (marker). -PI/2 = hướng lên (12h). Nếu bạn đổi kim sang vị trí khác, chỉ cần đổi giá trị này.
+const POINTER_ANGLE = -Math.PI/2;
 function normAngle(a){
   a = a % TAU;
   if (a < 0) a += TAU;
@@ -523,7 +600,9 @@ async function removeWinnerAndSave(winnerIndex){
 }
 
 // ===== Spin =====
+// ===== Spin (natural max, không nhảy, settle không vượt biên) =====
 async function spin(){
+  syncItemsFromEditor?.();
   if(spinning) return;
   if(items.length < 2){ alert('Cần ít nhất 2 ô.'); return; }
 
@@ -531,32 +610,40 @@ async function spin(){
   document.getElementById('spinBtn').disabled = true;
   document.getElementById('resultBox').innerHTML = `Kết quả: <b>đang quay...</b>`;
 
-  const n = items.length;
-  const targetIndex = pickWeightedIndex();
-
-
-  const step = (Math.PI*2)/n;
-  const targetAngleCenter = targetIndex*step + step/2;
-
-  // desiredRot: absolute
-  const desiredRot = -Math.PI/2 - targetAngleCenter;
-
-  const extraSpins = 12 + Math.random()*6;
+  // Giữ rotation nhỏ để tránh số quá lớn sau nhiều lần quay
+  rotation = normAngle(rotation);
   const start = rotation;
 
-  const curN = normAngle(start);
-  const desN = normAngle(desiredRot);
+  const n = items.length;
+  const step = TAU / n;
 
-  let delta = desN - curN;
-  if (delta > 0) delta -= TAU; // keep spinning forward (negative)
+  // 1) Chọn ô theo weight (logic của bạn)
+  const targetIndex = pickWeightedIndex();
 
-  const end = start + delta - extraSpins * TAU;
+  // 2) Chọn điểm dừng "sâu trong ô" để chừa khoảng cho wobble (tự nhiên)
+  // chừa mỗi bên ít nhất 30% lát cắt
+  const margin = step * 0.30;
+  const theta =
+    targetIndex * step +
+    margin +
+    Math.random() * (step - 2 * margin);
 
-  const dur = 5600 + Math.random()*900;
+  // 3) Góc cần đạt (không normalize để tránh snap, nhưng vẫn ok)
+  // muốn: theta nằm dưới kim => theta + rot ≡ POINTER_ANGLE
+  const desiredRot = POINTER_ANGLE - theta;
+
+  // 4) Thêm nhiều vòng quay (âm = cùng chiều bạn đang dùng)
+  const extraSpins = 9 + Math.floor(Math.random() * 6); // 9..14 vòng
+  let end = desiredRot - extraSpins * TAU;
+  while(end >= start) end -= TAU;
+
+  // 5) Animate giảm tốc tự nhiên
+  const dur = 5200 + Math.random() * 1200;
   const t0 = performance.now();
+  function easeOutQuint(t){ return 1 - Math.pow(1 - t, 5); }
 
   function frame(now){
-    const t = Math.min(1, (now - t0)/dur);
+    const t = Math.min(1, (now - t0) / dur);
     rotation = start + (end - start) * easeOutQuint(t);
     drawWheel();
 
@@ -565,26 +652,70 @@ async function spin(){
       return;
     }
 
-    spinning = false;
-    document.getElementById('spinBtn').disabled = false;
+    // ===== 6) SETTLE: dao động tắt dần, kẹp amplitude để không vượt biên =====
+    // Tính theta hiện tại dưới kim tại end
+    let thetaEnd = (POINTER_ANGLE - end) % TAU;
+    if(thetaEnd < 0) thetaEnd += TAU;
 
-    rotation = normAngle(rotation);
+    const low = targetIndex * step;
+    const high = low + step;
 
-    const idx = getIndexFromRotation(rotation);
-    const win = items[idx];
-    const label = win?.text ?? '—';
+    // khoảng cách tới biên của ô (đảm bảo settle không vượt biên)
+    const distToLow = thetaEnd - low;
+    const distToHigh = high - thetaEnd;
 
-    document.getElementById('resultBox').innerHTML = `Kết quả: <b>${escapeHtml(label)}</b>`;
+    // Amplitude tối đa cho phép (trừ chút đệm an toàn)
+    let Amax = Math.min(distToLow, distToHigh) - step * 0.03;
+    if(!Number.isFinite(Amax) || Amax < 0) Amax = 0;
 
-    launchConfetti(2600);
+    // Nếu vì lý do nào đó Amax quá nhỏ (rất hiếm), bỏ settle
+    const settleMs = 520 + Math.random()*180; // 520..700ms
+    const s0 = performance.now();
 
-    // IMPORTANT: frame() không async => bọc async IIFE
-    (async () => {
-      await showWinModal(label);
-      if (autoRemoveEnabled) {
-        await removeWinnerAndSave(idx);
+    // Amplitude thực tế: 55%..95% Amax, random dấu để tự nhiên
+    const sign = Math.random() < 0.5 ? -1 : 1;
+    const A = sign * (Amax * (0.55 + Math.random()*0.40));
+
+    // Tham số dao động tắt dần
+    const omega = 22 + Math.random()*6;  // tần số
+    const k = 7 + Math.random()*3;       // tắt dần
+
+    function settle(ts){
+      const dt = (ts - s0) / 1000; // giây
+      const u = Math.min(1, (ts - s0) / settleMs);
+
+      if(Amax > 0){
+        // rotation là end + dao động (dao động theo rot => theta đổi ngược, nhưng vẫn nằm trong biên do kẹp A)
+        const wobble = A * Math.exp(-k * dt) * Math.sin(omega * dt);
+        rotation = end + wobble;
+      } else {
+        rotation = end;
       }
-    })();
+
+      drawWheel();
+
+      if(u < 1){
+        requestAnimationFrame(settle);
+        return;
+      }
+
+      // ===== 7) CHỐT KẾT QUẢ THEO GÓC THẬT (visual) =====
+      const stopIndex = getIndexFromRotation(rotation);
+
+      spinning = false;
+      document.getElementById('spinBtn').disabled = false;
+
+      const label = items[stopIndex]?.text ?? '—';
+      document.getElementById('resultBox').innerHTML = `Kết quả: <b>${escapeHtml(label)}</b>`;
+      launchConfetti(2600);
+
+      (async () => {
+        await showWinModal(label);
+        if (autoRemoveEnabled) await removeWinnerAndSave(stopIndex);
+      })();
+    }
+
+    requestAnimationFrame(settle);
   }
 
   requestAnimationFrame(frame);
@@ -601,18 +732,18 @@ function shuffle(){
   drawWheel();
 }
 
-function resetSample(){
-  items = [
-    { id:"1", text:"Giải Nhất", color:"#ff4d4f", weight:1 },
-    { id:"2", text:"Giải Nhì",  color:"#faad14", weight:1 },
-    { id:"3", text:"Giải Ba",   color:"#52c41a", weight:1 },
-    { id:"4", text:"Chúc may mắn lần sau", color:"#1890ff", weight:1 },
-  ];
+  function resetSample(){
+    items = [
+      { id:"1", text:"Giải Nhất", color:"#ff4d4f", weight:0 },
+      { id:"2", text:"Giải Nhì",  color:"#faad14", weight:0 },
+      { id:"3", text:"Giải Ba",   color:"#52c41a", weight:0 },
+      { id:"4", text:"Chúc may mắn lần sau", color:"#1890ff", weight:0 },
+    ];
+    saveToLocal();
+    renderEditor();
+    drawWheel();
+  }
 
-  saveToLocal();
-  renderEditor();
-  drawWheel();
-}
 
 
 // ===== Events =====
@@ -672,7 +803,7 @@ document.getElementById('saveBtn').addEventListener('click', save);
 
 
 document.getElementById('addBtn').addEventListener('click', ()=>{
-  items.push({ id: uid(), text: "Ô mới", color: pickNewColor(), weight: 1 });
+  items.push({ id: uid(), text: "Ô mới", color: pickNewColor(), weight: 0 });
   saveToLocal();
   renderEditor();
   drawWheel();
