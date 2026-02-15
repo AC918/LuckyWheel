@@ -25,10 +25,19 @@ let adminMode = isAdminFromQuery;
 
 window.addEventListener('keydown', (e) => {
   if (e.ctrlKey && e.altKey && e.key.toLowerCase() === 'w') {
-    adminMode = !adminMode;
-    renderEditor();
+    toggleAdminMode();
   }
 });
+
+function toggleAdminMode(){
+  adminMode = !adminMode;
+  renderEditor();
+
+  // feedback nhẹ (không bắt buộc)
+  const msg = adminMode ? "Admin: ON (hiện Weight)" : "Admin: OFF (ẩn Weight)";
+  console.log(msg);
+}
+
 
 // ===== Helpers =====
 function uid(){ return Math.random().toString(16).slice(2) + Date.now().toString(16); }
@@ -535,6 +544,58 @@ function resetSample(){
 // ===== Events =====
 document.getElementById('spinBtn').addEventListener('click', spin);
 document.getElementById('saveBtn').addEventListener('click', save);
+// Mobile: long-press nút Lưu để bật/tắt Admin (ẩn/hiện Weight)
+(() => {
+  const saveBtn = document.getElementById('saveBtn');
+  if(!saveBtn) return;
+
+  let pressTimer = null;
+
+  const start = () => {
+    clearTimeout(pressTimer);
+    pressTimer = setTimeout(() => {
+      toggleAdminMode();
+      // rung nhẹ (nếu hỗ trợ)
+      if (navigator.vibrate) navigator.vibrate(40);
+    }, 1200);
+  };
+
+  const cancel = () => {
+    clearTimeout(pressTimer);
+    pressTimer = null;
+  };
+
+  saveBtn.addEventListener('pointerdown', start);
+  saveBtn.addEventListener('pointerup', cancel);
+  saveBtn.addEventListener('pointercancel', cancel);
+  saveBtn.addEventListener('pointerleave', cancel);
+})();
+// Mobile: chạm 5 lần vào tiêu đề để bật/tắt Admin
+(() => {
+  const title = document.getElementById('titleTap');
+  if(!title) return;
+
+  let taps = 0;
+  let timer = null;
+
+  title.style.cursor = 'pointer';
+
+  title.addEventListener('click', () => {
+    taps++;
+    clearTimeout(timer);
+
+    timer = setTimeout(() => {
+      taps = 0;
+    }, 700);
+
+    if(taps >= 5){
+      taps = 0;
+      toggleAdminMode();
+      if (navigator.vibrate) navigator.vibrate(40);
+    }
+  });
+})();
+
 
 document.getElementById('addBtn').addEventListener('click', ()=>{
   items.push({ id: uid(), text: "Ô mới", color: pickNewColor(), weight: 1 });
