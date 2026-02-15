@@ -240,11 +240,12 @@ async function load(){
     items = saved;
   } else {
     items = [
-      { id:"1", text:"Giải Nhất", color:"#ff4d4f", weight:1 },
-      { id:"2", text:"Giải Nhì",  color:"#faad14", weight:2 },
-      { id:"3", text:"Giải Ba",  color:"#52c41a", weight:3 },
-      { id:"4", text:"Chúc may mắn lần sau", color:"#1890ff", weight:4 },
-    ];
+  { id:"1", text:"Giải Nhất", color:"#ff4d4f", weight:1 },
+  { id:"2", text:"Giải Nhì",  color:"#faad14", weight:1 },
+  { id:"3", text:"Giải Ba",  color:"#52c41a", weight:1 },
+  { id:"4", text:"Chúc may mắn lần sau", color:"#1890ff", weight:1 },
+];
+
     saveToLocal();
   }
 
@@ -433,6 +434,35 @@ function getIndexFromRotation(rot){
 }
 
 function easeOutQuint(t){ return 1 - Math.pow(1 - t, 5); }
+function pickWeightedIndex(){
+  if(items.length === 0) return -1;
+
+  // Chuẩn hóa weight
+  const weights = items.map(it => {
+    const w = Number(it.weight);
+    return (Number.isFinite(w) && w > 0) ? w : 1;
+  });
+
+  const total = weights.reduce((a,b)=>a+b,0);
+
+  // Nếu total lỗi → fallback random đều
+  if(!(total > 0)){
+    return Math.floor(Math.random() * items.length);
+  }
+
+  let r = Math.random() * total;
+
+  for(let i=0;i<weights.length;i++){
+    if(r < weights[i]){
+      return i;
+    }
+    r -= weights[i];
+  }
+
+  // fallback an toàn
+  return weights.length - 1;
+}
+
 
 // ===== Fix spin slow after first time: normalize + delta from current =====
 const TAU = Math.PI * 2;
@@ -461,7 +491,8 @@ async function spin(){
   document.getElementById('resultBox').innerHTML = `Kết quả: <b>đang quay...</b>`;
 
   const n = items.length;
-  const targetIndex = Math.floor(Math.random()*n);
+  const targetIndex = pickWeightedIndex();
+
 
   const step = (Math.PI*2)/n;
   const targetAngleCenter = targetIndex*step + step/2;
@@ -532,14 +563,16 @@ function shuffle(){
 function resetSample(){
   items = [
     { id:"1", text:"Giải Nhất", color:"#ff4d4f", weight:1 },
-    { id:"2", text:"Giải Nhì",  color:"#faad14", weight:2 },
-    { id:"3", text:"Giải Ba",  color:"#52c41a", weight:3 },
-    { id:"4", text:"Chúc may mắn lần sau", color:"#1890ff", weight:4 },
+    { id:"2", text:"Giải Nhì",  color:"#faad14", weight:1 },
+    { id:"3", text:"Giải Ba",   color:"#52c41a", weight:1 },
+    { id:"4", text:"Chúc may mắn lần sau", color:"#1890ff", weight:1 },
   ];
+
   saveToLocal();
   renderEditor();
   drawWheel();
 }
+
 
 // ===== Events =====
 document.getElementById('spinBtn').addEventListener('click', spin);
