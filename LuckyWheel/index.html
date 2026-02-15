@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Vòng quay may mắn</title>
+
+  <link rel="stylesheet" href="./css/site.css">
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="topbar">
+        <h2>🎡 Vòng quay may mắn</h2>
+        <div class="pill" id="countPill">0 ô</div>
+      </div>
+
+      <div class="wheel-area">
+        <div class="wheel-shell">
+          <canvas id="wheel" width="900" height="900"></canvas>
+        </div>
+
+        <div class="controls">
+          <button id="spinBtn">SPIN</button>
+          <button class="secondary" id="shuffleBtn">Xáo trộn</button>
+          <button class="secondary" id="resetBtn">Reset mẫu</button>
+          <button class="secondary" id="autoRemoveBtn">Auto remove: OFF</button>
+        </div>
+
+        <div class="result" id="resultBox">Kết quả: <b>—</b></div>
+
+        <div class="hint">
+          Tip: Weight là tính năng ẩn. Bật/tắt Admin bằng <b>Ctrl + Alt + W</b> hoặc thêm <b>?admin=1</b>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 class="section-title">⚙️ Chỉnh sửa các ô</h2>
+      <div class="editor">
+        <div class="hint">Thêm / sửa / xoá ô. Bấm <b>Lưu</b> để cập nhật vòng quay. (Tối thiểu 2 ô)</div>
+        <div id="items"></div>
+
+        <div class="controls left">
+          <button class="secondary" id="addBtn">+ Thêm ô</button>
+          <button id="saveBtn">Lưu</button>
+        </div>
+
+        <div class="small">Bản GitHub Pages lưu dữ liệu bằng LocalStorage (trên trình duyệt).</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confetti overlay -->
+  <canvas id="confetti"></canvas>
+
+  <!-- WIN MODAL -->
+  <div id="winModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-title">🎉 CHÚC MỪNG!</div>
+      <div class="modal-prize" id="winText">—</div>
+      <button id="winOkBtn" class="modal-ok">OK</button>
+    </div>
+  </div>
+
+  <script src="./js/app.js"></script>
+</body>
+</html>
