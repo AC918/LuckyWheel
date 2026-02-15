@@ -435,33 +435,74 @@ function getIndexFromRotation(rot){
 
 function easeOutQuint(t){ return 1 - Math.pow(1 - t, 5); }
 function pickWeightedIndex(){
-  if(items.length === 0) return -1;
+  const n = items.length;
+  if(n === 0) return -1;
 
-  // Chuẩn hóa weight
-  const weights = items.map(it => {
-    const w = Number(it.weight);
-    return (Number.isFinite(w) && w > 0) ? w : 1;
+  // đọc % (0..100); NaN/<=0 coi như "chưa set"
+  const raw = items.map(it => {
+    const v = Number(it.weight);
+    return (Number.isFinite(v) && v > 0) ? v : 0;
   });
 
-  const total = weights.reduce((a,b)=>a+b,0);
-
-  // Nếu total lỗi → fallback random đều
-  if(!(total > 0)){
-    return Math.floor(Math.random() * items.length);
+  // Nếu có ô 100% (hoặc hơn) => chắc chắn vào ô có % lớn nhất
+  const maxV = Math.max(...raw);
+  if (maxV >= 100){
+    const candidates = [];
+    for(let i=0;i<n;i++) if(raw[i] === maxV) candidates.push(i);
+    return candidates[Math.floor(Math.random() * candidates.length)];
   }
 
-  let r = Math.random() * total;
+  const specifiedIdx = [];
+  const unspecifiedIdx = [];
+  for(let i=0;i<n;i++){
+    if(raw[i] > 0) specifiedIdx.push(i);
+    else unspecifiedIdx.push(i);
+  }
 
-  for(let i=0;i<weights.length;i++){
-    if(r < weights[i]){
-      return i;
+  // Không ai set % => chia đều
+  if(specifiedIdx.length === 0){
+    return Math.floor(Math.random() * n);
+  }
+
+  const sum = specifiedIdx.reduce((acc,i)=>acc + raw[i], 0);
+
+  // Tạo prob cho mỗi ô (tổng = 1)
+  const prob = new Array(n).fill(0);
+
+  if (sum >= 100){
+    // sum > 100 => scale về 100%
+    for(const i of specifiedIdx){
+      prob[i] = raw[i] / sum;
     }
-    r -= weights[i];
+    // unspecified = 0
+  } else {
+    if (unspecifiedIdx.length > 0){
+      // còn phần trăm => chia đều cho các ô chưa set
+      const remain = 100 - sum;
+      for(const i of specifiedIdx){
+        prob[i] = raw[i] / 100;
+      }
+      const each = remain / 100 / unspecifiedIdx.length;
+      for(const i of unspecifiedIdx){
+        prob[i] = each;
+      }
+    } else {
+      // tất cả đều có % nhưng sum < 100 => chuẩn hoá theo tỉ lệ tương đối
+      for(const i of specifiedIdx){
+        prob[i] = raw[i] / sum;
+      }
+    }
   }
 
-  // fallback an toàn
-  return weights.length - 1;
+  // Random theo prob
+  let r = Math.random();
+  for(let i=0;i<n;i++){
+    r -= prob[i];
+    if(r <= 0) return i;
+  }
+  return n - 1;
 }
+
 
 
 // ===== Fix spin slow after first time: normalize + delta from current =====
